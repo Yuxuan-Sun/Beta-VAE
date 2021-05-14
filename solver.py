@@ -17,6 +17,8 @@ from utils import cuda, grid2gif
 from model import BetaVAE_H, BetaVAE_B
 from dataset import return_data
 
+import torch.distributed as dist
+
 
 def reconstruction_loss(x, x_recon, distribution):
     batch_size = x.size(0)
@@ -97,6 +99,9 @@ class Solver(object):
         elif args.dataset.lower() == 'celeba':
             self.nc = 3
             self.decoder_dist = 'gaussian'
+        elif args.dataset.lower() == 'cub_birds':
+            self.nc = 3
+            self.decoder_dist = 'gaussian'
         else:
             raise NotImplementedError
 
@@ -144,6 +149,46 @@ class Solver(object):
 
         self.gather = DataGather()
 
+        
+        # ngpus_per_node = torch.cuda.device_count()
+        # args.distributed = args.world_size > 1 or args.multiprocessing_distributed
+        # if args.distributed:
+        #     if args.dist_url == "env://" and args.rank == -1:
+        #         args.rank = int(os.environ["RANK"])
+        #     if args.multiprocessing_distributed:
+        #         # For multiprocessing distributed training, rank needs to be the
+        #         # global rank among all the processes
+        #         args.rank = args.rank * ngpus_per_node
+        #     dist.init_process_group(backend=args.dist_backend, init_method=args.dist_url,
+        #                             world_size=args.world_size, rank=args.rank)
+
+        # if not torch.cuda.is_available():
+        #     print('using CPU, this will be slow')
+        # elif args.distributed:
+        #     # For multiprocessing distributed, DistributedDataParallel constructor
+        #     # should always set the single device scope, otherwise,
+        #     # DistributedDataParallel will use all available devices.
+        #     if args.gpu is not None:
+        #         torch.cuda.set_device(args.gpu)
+        #         self.cuda(args.gpu)
+        #         # When using a single GPU per process and per
+        #         # DistributedDataParallel, we need to divide the batch size
+        #         # ourselves based on the total number of GPUs we have
+        #         args.batch_size = int(args.batch_size / ngpus_per_node)
+        #         args.workers = int((args.workers + ngpus_per_node - 1) / ngpus_per_node)
+        #         self = torch.nn.parallel.DistributedDataParallel(self, device_ids=[args.gpu])
+        #     else:
+        #         self.net.cuda()
+        #         # DistributedDataParallel will divide and allocate batch_size to all
+        #         # available GPUs if device_ids are not set
+        #         self.net = torch.nn.parallel.DistributedDataParallel(self.net)
+        # elif args.gpu is not None:
+        #     torch.cuda.set_device(args.gpu)
+        #     self.net = self.net.cuda(args.gpu)
+        # else:
+        #     # DataParallel will divide and allocate batch_size to all available GPUs
+        #     self = torch.nn.DataParallel(self).cuda()
+
     def train(self):
         self.net_mode(train=True)
         self.C_max = Variable(cuda(torch.FloatTensor([self.C_max]), self.use_cuda))
@@ -179,7 +224,7 @@ class Solver(object):
 
                 if self.global_iter%self.display_step == 0:
                     pbar.write('[{}] recon_loss:{:.3f} total_kld:{:.3f} mean_kld:{:.3f}'.format(
-                        self.global_iter, recon_loss.data[0], total_kld.data[0], mean_kld.data[0]))
+                        self.global_iter, recon_loss.data.item(), total_kld.data.item(), mean_kld.data.item()))
 
                     var = logvar.exp().mean(0).data
                     var_str = ''
@@ -415,7 +460,7 @@ class Solver(object):
             for i, key in enumerate(Z.keys()):
                 for j, val in enumerate(interpolation):
                     save_image(tensor=gifs[i][j].cpu(),
-                               filename=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
+                               fp=os.path.join(output_dir, '{}_{}.jpg'.format(key, j)),
                                nrow=self.z_dim, pad_value=1)
 
                 grid2gif(os.path.join(output_dir, key+'*.jpg'),
